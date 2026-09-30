@@ -1,370 +1,144 @@
 using System.Collections.Generic;
 using UnityEngine;
 
+[RequireComponent(typeof(Rigidbody2D))]
 public class KnotAttack : MonoBehaviour
 {
-    [SerializeField] private float dashSpeed = 20f;
-    [SerializeField] private float attackRadius = 0.3f;
+    [Header("Path attack")]
+    [SerializeField] private float pathSpeed = 12f;
+    [SerializeField] private float attackRadius = 0.45f;
     [SerializeField] private int attackDamage = 1;
+    [SerializeField] private float fallStartSpeed = 2f;
 
+    private readonly HashSet<Enemy> hitEnemies = new HashSet<Enemy>();
     private Rigidbody2D rb;
+    private PlayerMovement movement;
+    private StringDrawer stringDrawer;
+    private List<Vector3> path;
+    private int pathIndex;
+    private float savedGravityScale;
 
-    private bool isDashing = false;
-    private bool hasReachedKnot = false;
-
-    private Vector2 knotPosition;
-
-    private List<Vector3> attackPath;
-    private int currentPathIndex;
-
-    private HashSet<Enemy> hitEnemies =
-        new HashSet<Enemy>();
+    public bool IsFollowingPath { get; private set; }
 
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
+        movement = GetComponent<PlayerMovement>();
+        stringDrawer = GetComponent<StringDrawer>();
     }
 
-    private void Update()
+    private void FixedUpdate()
     {
-        if (!isDashing)
-            return;
+        if (!IsFollowingPath || path == null) return;
 
-        MoveAttack();
+        float remainingMove = pathSpeed * Time.fixedDeltaTime;
+        while (remainingMove > 0f && pathIndex < path.Count)
+        {
+            Vector2 from = rb.position;
+            Vector2 target = path[pathIndex];
+            float distance = Vector2.Distance(from, target);
+            bool isDrawnSegment = pathIndex > 0;
+
+            if (distance <= remainingMove)
+            {
+                rb.position = target;
+                remainingMove -= distance;
+                pathIndex++;
+
+                if (!isDrawnSegment)
+                    CheckAttackAt(rb.position);
+            }
+            else
+            {
+                rb.position = Vector2.MoveTowards(from, target, remainingMove);
+                remainingMove = 0f;
+            }
+
+            if (isDrawnSegment)
+                CheckAttackBetween(from, rb.position);
+        }
+
+        if (pathIndex > 0)
+            stringDrawer?.ShowRemainingPath(rb.position, path, pathIndex);
+
+        if (pathIndex >= path.Count) FinishPath();
     }
 
-    public void DashFromKnot(
-        Vector3 knotPosition,
-        List<Vector3> path)
+    public void FollowDrawnPath(List<Vector3> drawnPath)
     {
-        if (path == null || path.Count < 4)
-            return;
+        if (drawnPath == null || drawnPath.Count < 2) return;
 
-        this.knotPosition = knotPosition;
+        CancelPath();
+        path = new List<Vector3>(drawnPath.Count);
+        foreach (Vector3 point in drawnPath)
+            path.Add(new Vector3(point.x, point.y, 0f));
 
         hitEnemies.Clear();
-
-        attackPath = RemoveLoops(path);
-
-        if (attackPath.Count < 2)
-            return;
-
-        hasReachedKnot = false;
-
-        currentPathIndex =
-            FindPathIndexAfterKnot(
-                knotPosition,
-                attackPath
-            );
-
-        if (
-            Vector2.Distance(
-                rb.position,
-                knotPosition
-            ) < 0.1f
-        )
-        {
-            rb.position = knotPosition;
-            hasReachedKnot = true;
-        }
-
-        isDashing = true;
-
-        Debug.Log(
-            "고리 제거 완료 / String Action 시작"
-        );
+        pathIndex = 0;
+        savedGravityScale = rb.gravityScale;
+        movement?.SetMovementLocked(true);
+        rb.gravityScale = 0f;
+        rb.linearVelocity = Vector2.zero;
+        rb.freezeRotation = true;
+        IsFollowingPath = true;
     }
 
-    private List<Vector3> RemoveLoops(
-        List<Vector3> originalPath)
+    // Backward compatibility for the existing Knot prefab.
+    public void DashFromKnot(Vector3 knotPosition, List<Vector3> drawnPath)
     {
-        List<Vector3> result =
-            new List<Vector3>(originalPath);
-
-        bool loopFound = true;
-
-        while (loopFound)
-        {
-            loopFound = false;
-
-            for (
-                int i = 0;
-                i < result.Count - 3;
-                i++
-            )
-            {
-                for (
-                    int j = i + 2;
-                    j < result.Count - 1;
-                    j++
-                )
-                {
-                    if (j == i + 1)
-                        continue;
-
-                    Vector2 intersection;
-
-                    if (!GetSegmentIntersection(
-                        result[i],
-                        result[i + 1],
-                        result[j],
-                        result[j + 1],
-                        out intersection))
-                    {
-                        continue;
-                    }
-
-                    List<Vector3> newPath =
-                        new List<Vector3>();
-
-                    for (int k = 0; k <= i; k++)
-                    {
-                        newPath.Add(result[k]);
-                    }
-
-                    newPath.Add(intersection);
-
-                    for (
-                        int k = j + 1;
-                        k < result.Count;
-                        k++
-                    )
-                    {
-                        newPath.Add(result[k]);
-                    }
-
-                    result = newPath;
-
-                    loopFound = true;
-
-                    break;
-                }
-
-                if (loopFound)
-                    break;
-            }
-        }
-
-        return result;
+        FollowDrawnPath(drawnPath);
     }
 
-    private bool GetSegmentIntersection(
-        Vector3 a,
-        Vector3 b,
-        Vector3 c,
-        Vector3 d,
-        out Vector2 intersection)
+    public void CancelPath()
     {
-        intersection = Vector2.zero;
-
-        Vector2 p = a;
-        Vector2 r = b - a;
-
-        Vector2 q = c;
-        Vector2 s = d - c;
-
-        float crossRS =
-            Cross(r, s);
-
-        if (Mathf.Abs(crossRS) < 0.00001f)
-            return false;
-
-        Vector2 qMinusP =
-            q - p;
-
-        float t =
-            Cross(
-                qMinusP,
-                s
-            ) / crossRS;
-
-        float u =
-            Cross(
-                qMinusP,
-                r
-            ) / crossRS;
-
-        if (
-            t >= 0f &&
-            t <= 1f &&
-            u >= 0f &&
-            u <= 1f
-        )
-        {
-            intersection =
-                p + r * t;
-
-            return true;
-        }
-
-        return false;
+        if (!IsFollowingPath) return;
+        FinishPath();
     }
 
-    private float Cross(
-        Vector2 a,
-        Vector2 b)
+    private void CheckAttackBetween(Vector2 from, Vector2 to)
     {
-        return
-            a.x * b.y -
-            a.y * b.x;
+        Vector2 move = to - from;
+        float distance = move.magnitude;
+
+        if (distance > 0f)
+        {
+            RaycastHit2D[] hits = Physics2D.CircleCastAll(
+                from,
+                attackRadius,
+                move.normalized,
+                distance);
+
+            foreach (RaycastHit2D hit in hits)
+                TryHitEnemy(hit.collider);
+        }
+
+        CheckAttackAt(to);
     }
 
-    private int FindPathIndexAfterKnot(
-        Vector2 knot,
-        List<Vector3> path)
+    private void CheckAttackAt(Vector2 position)
     {
-        int nearestIndex = -1;
-
-        float nearestDistance =
-            float.MaxValue;
-
-        for (
-            int i = 0;
-            i < path.Count;
-            i++
-        )
-        {
-            float distance =
-                Vector2.Distance(
-                    knot,
-                    path[i]
-                );
-
-            if (distance < nearestDistance)
-            {
-                nearestDistance = distance;
-                nearestIndex = i;
-            }
-        }
-
-        if (nearestIndex < 0)
-            return path.Count;
-
-        if (nearestIndex < path.Count - 1)
-            return nearestIndex + 1;
-
-        return path.Count;
-    }
-
-    private void MoveAttack()
-    {
-        if (!hasReachedKnot)
-        {
-            Vector2 direction =
-                knotPosition -
-                rb.position;
-
-            float distance =
-                direction.magnitude;
-
-            float knotMoveDistance =
-                dashSpeed *
-                Time.deltaTime;
-
-            if (distance <= knotMoveDistance)
-            {
-                rb.position =
-                    knotPosition;
-
-                hasReachedKnot = true;
-
-                CheckAttack();
-
-                return;
-            }
-
-            rb.position +=
-                direction.normalized *
-                knotMoveDistance;
-
-            CheckAttack();
-
-            return;
-        }
-
-        if (
-            attackPath == null ||
-            currentPathIndex >= attackPath.Count
-        )
-        {
-            FinishAttack();
-            return;
-        }
-
-        Vector2 target =
-            attackPath[currentPathIndex];
-
-        Vector2 directionToTarget =
-            target - rb.position;
-
-        float distanceToTarget =
-            directionToTarget.magnitude;
-
-        float pathMoveDistance =
-            dashSpeed *
-            Time.deltaTime;
-
-        if (distanceToTarget <= pathMoveDistance)
-        {
-            rb.position =
-                target;
-
-            currentPathIndex++;
-
-            CheckAttack();
-
-            if (
-                currentPathIndex >=
-                attackPath.Count
-            )
-            {
-                FinishAttack();
-            }
-
-            return;
-        }
-
-        rb.position +=
-            directionToTarget.normalized *
-            pathMoveDistance;
-
-        CheckAttack();
-    }
-
-    private void CheckAttack()
-    {
-        Collider2D[] hits =
-            Physics2D.OverlapCircleAll(
-                rb.position,
-                attackRadius
-            );
-
+        Collider2D[] hits = Physics2D.OverlapCircleAll(position, attackRadius);
         foreach (Collider2D hit in hits)
-        {
-            if (!hit.CompareTag("Enemy"))
-                continue;
-
-            Enemy enemy =
-                hit.GetComponent<Enemy>();
-
-            if (enemy == null)
-                continue;
-
-            if (hitEnemies.Contains(enemy))
-                continue;
-
-            hitEnemies.Add(enemy);
-
-            enemy.TakeDamage(attackDamage);
-        }
+            TryHitEnemy(hit);
     }
 
-    private void FinishAttack()
+    private void TryHitEnemy(Collider2D hit)
     {
-        isDashing = false;
+        Enemy enemy = hit.GetComponentInParent<Enemy>();
+        if (enemy == null || !hitEnemies.Add(enemy)) return;
 
-        Debug.Log(
-            "String Action 종료!"
-        );
+        enemy.TakeDamage(attackDamage);
+        CameraShake.Instance?.Play(0.14f, 0.18f);
+        HitStop.Instance?.Play(0.075f);
+    }
+
+    private void FinishPath()
+    {
+        IsFollowingPath = false;
+        rb.gravityScale = savedGravityScale;
+        rb.linearVelocity = new Vector2(0f, -Mathf.Abs(fallStartSpeed));
+        movement?.SetMovementLocked(false);
+        stringDrawer?.ClearLine();
+        path = null;
     }
 }

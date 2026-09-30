@@ -1,31 +1,28 @@
 using UnityEngine;
 
+[RequireComponent(typeof(Collider2D))]
 public class Enemy : MonoBehaviour
 {
-    [SerializeField] private int maxHP = 3;
+    [SerializeField] private int maxHealth = 3;
 
-    private int currentHP;
+    private int health;
+    private EnemyHitEffect hitEffect;
 
     private void Awake()
     {
-        currentHP = maxHP;
+        health = maxHealth;
+        hitEffect = GetComponent<EnemyHitEffect>();
+
+        // Enemies are attack targets, so they should not physically block the player.
+        GetComponent<Collider2D>().isTrigger = true;
     }
 
     public void TakeDamage(int damage)
     {
-        currentHP -= damage;
+        health -= damage;
+        hitEffect?.Play();
 
-        Debug.Log("적 HP: " + currentHP);
-
-        if (currentHP <= 0)
-        {
-            Die();
-        }
-    }
-
-    private void Die()
-    {
-        Debug.Log("적 처치!");
-        Destroy(gameObject);
+        if (health <= 0)
+            Destroy(gameObject);
     }
 }
