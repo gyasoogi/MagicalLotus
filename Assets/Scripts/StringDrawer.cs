@@ -2,13 +2,17 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
+[RequireComponent(typeof(DrawingModeController))]
 public class StringDrawer : MonoBehaviour
 {
     [SerializeField] public LineRenderer lineRenderer;
     [SerializeField] private float minPointDistance = 0.08f;
     [SerializeField] private float wallPadding = 0.05f;
+    [SerializeField, Min(0.1f)] private float shieldDuration = 5f;
+    [SerializeField, Range(1, 8)] private int maximumShields = 3;
 
     private readonly List<Vector3> points = new List<Vector3>();
+    private readonly List<DefensiveStringShield> shields = new List<DefensiveStringShield>();
     private Camera mainCamera;
     private KnotAttack attack;
     private ProjectileCapture projectileCapture;
@@ -16,6 +20,9 @@ public class StringDrawer : MonoBehaviour
     private Collider2D playerCollider;
     private bool isDrawing;
     private bool drawingBlocked;
+    private bool defensiveDrawing;
+    public bool IsDrawing => isDrawing;
+    public bool IsDefensiveDrawing => isDrawing && defensiveDrawing;
 
     private void Awake()
     {
@@ -35,58 +42,76 @@ public class StringDrawer : MonoBehaviour
     {
         if (Mouse.current == null || lineRenderer == null || mainCamera == null) return;
 
-        if (Mouse.current.leftButton.wasPressedThisFrame) StartDrawing();
-        if (Mouse.current.leftButton.isPressed && isDrawing) DrawString();
-        if (Mouse.current.leftButton.wasReleasedThisFrame && isDrawing) EndDrawing();
+        if (!isDrawing)
+        {
+            if (Mouse.current.leftButton.wasPressedThisFrame) StartDrawing(false);
+            else if (Mouse.current.rightButton.wasPressedThisFrame) StartDrawing(true);
+        }
+        if (!isDrawing) return;
+        var button = defensiveDrawing ? Mouse.current.rightButton : Mouse.current.leftButton;
+        if (button.isPressed) DrawString();
+        if (button.wasReleasedThisFrame) EndDrawing();
     }
 
-    private void StartDrawing()
+    private void StartDrawing(bool defensive)
     {
+        if (KarmaBeadHud.IsPointerOverHud() || (GetComponent<KarmaBeadHud>()?.IsDragging ?? false)) return;
+        GetComponent<PlayerMovement>()?.CancelDash();
         attack?.CancelPath();
-        drawingMode?.BeginDrawing();
+        drawingMode?.BeginDrawing(defensive);
+        defensiveDrawing = defensive;
         isDrawing = true;
         drawingBlocked = false;
         points.Clear();
         lineRenderer.positionCount = 0;
 
-        // The string begins where the player actually clicks.
-        AddPoint(GetMouseWorldPosition());
+        lineRenderer.startColor = lineRenderer.endColor = defensive ? new Color(0.3f, 0.85f, 1f) : new Color(1f, 0.8f, 0.3f);
+        AddPoint(defensive ? GetMouseWorldPosition() : transform.position);
+        if (!defensive) TryAddPoint(GetMouseWorldPosition());
     }
 
     private void DrawString()
     {
-        if (drawingBlocked) return;
-        TryAddPoint(GetMouseWorldPosition());
+        if (!drawingBlocked) TryAddPoint(GetMouseWorldPosition());
+        if (defensiveDrawing) projectileCapture?.SlowAlongString(points);
     }
 
     private void EndDrawing()
     {
         isDrawing = false;
 
-        int capturedProjectileCount = 0;
-        bool closedShape = projectileCapture != null
-            && projectileCapture.TryCaptureClosedShape(points, out capturedProjectileCount);
-
-        if (closedShape)
-            RefreshLine();
-
         drawingMode?.EndDrawing();
-
-        if (capturedProjectileCount > 0)
+        if (defensiveDrawing)
         {
-            // A captured projectile consumes the loop, so the line disappears with it.
+            projectileCapture?.SlowAlongString(points);
+            bool closed = projectileCapture != null && projectileCapture.TryCaptureClosedShape(points, out _);
+            if (!closed && points.Count >= 2 && projectileCapture != null)
+            {
+                shields.RemoveAll(shield => shield == null);
+                while (shields.Count >= Mathf.Max(1, maximumShields))
+                {
+                    Destroy(shields[0].gameObject);
+                    shields.RemoveAt(0);
+                }
+                shields.Add(DefensiveStringShield.Create(projectileCapture, points, lineRenderer, shieldDuration));
+            }
             ClearLine();
             return;
         }
 
         if (points.Count >= 2)
             attack?.FollowDrawnPath(points);
+        if (attack == null || !attack.IsFollowingPath) ClearLine();
     }
 
     private void OnDisable()
     {
         isDrawing = false;
         drawingMode?.EndDrawing();
+        foreach (DefensiveStringShield shield in shields)
+            if (shield != null) Destroy(shield.gameObject);
+        shields.Clear();
+        ClearLine();
     }
 
     private void RefreshLine()
@@ -181,6 +206,11 @@ public class StringDrawer : MonoBehaviour
         Vector3 screen = Mouse.current.position.ReadValue();
         Vector3 world = mainCamera.ScreenToWorldPoint(screen);
         world.z = 0f;
+        if (defensiveDrawing && projectileCapture != null)
+        {
+            Vector2 delta = world - transform.position;
+            world = transform.position + (Vector3)Vector2.ClampMagnitude(delta, projectileCapture.CaptureRange);
+        }
         return world;
     }
 }

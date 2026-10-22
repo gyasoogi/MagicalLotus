@@ -43,25 +43,35 @@
     <UnityVersion>6000.3.4f1</UnityVersion>
   </PropertyGroup>
   <ItemGroup>
-    <Analyzer Include="C:\Users\royki\.vscode\extensions\visualstudiotoolsforunity.vstuc-1.3.1\Analyzers\Microsoft.Unity.Analyzers.dll" />
+    <Analyzer Include="C:\Users\royki\.vscode\extensions\visualstudiotoolsforunity.vstuc-1.3.2\Analyzers\Microsoft.Unity.Analyzers.dll" />
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\6000.3.4f1\Editor\Data\Tools\BuildPipeline\Unity.SourceGenerators\Unity.SourceGenerators.dll" />
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\6000.3.4f1\Editor\Data\Tools\BuildPipeline\Unity.SourceGenerators\Unity.Properties.SourceGenerator.dll" />
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\6000.3.4f1\Editor\Data\Tools\BuildPipeline\Unity.SourceGenerators\Unity.UIToolkit.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Assets\Scripts\DrawingScreenEffect.cs" />
     <Compile Include="Assets\Scripts\ProjectileCapture.cs" />
+    <Compile Include="Assets\Scripts\PlayerHealth.cs" />
+    <Compile Include="Assets\Scripts\DrawingModeController.cs" />
+    <Compile Include="Assets\Scripts\KarmaKeyword.cs" />
+    <Compile Include="Assets\Scripts\EnemyHitEffect.cs" />
+    <Compile Include="Assets\Scripts\Enemy.cs" />
+    <Compile Include="Assets\Scripts\GameTimeEffects.cs" />
+    <Compile Include="Assets\Scripts\StringDrawer.cs" />
+    <Compile Include="Assets\Scripts\KarmaOutbreak.cs" />
+    <Compile Include="Assets\Scripts\DrawingScreenEffect.cs" />
     <Compile Include="Assets\Scripts\Knot.cs" />
     <Compile Include="Assets\Scripts\PlayerJump.cs" />
     <Compile Include="Assets\Scripts\CameraShake.cs" />
-    <Compile Include="Assets\Scripts\DrawingModeController.cs" />
     <Compile Include="Assets\Scripts\PlayerMovement.cs" />
-    <Compile Include="Assets\Scripts\EnemyHitEffect.cs" />
+    <Compile Include="Assets\Scripts\KarmaBeadHud.cs" />
     <Compile Include="Assets\Scripts\CapturableProjectile.cs" />
-    <Compile Include="Assets\Scripts\Enemy.cs" />
+    <Compile Include="Assets\Scripts\GameRestartController.cs" />
+    <Compile Include="Assets\Scripts\KarmaMovementEffect.cs" />
     <Compile Include="Assets\Scripts\KnotAttack.cs" />
-    <Compile Include="Assets\Scripts\StringDrawer.cs" />
     <Compile Include="Assets\Scripts\HitStop.cs" />
+    <Compile Include="Assets\Scripts\EnemyRespawner.cs" />
+    <Compile Include="Assets\Scripts\DefensiveStringShield.cs" />
+    <Compile Include="Assets\Scripts\EndlessGround.cs" />
     <Compile Include="Assets\Scripts\EnemyProjectileThrower.cs" />
     <Compile Include="Assets\Scripts\ProjectileStorage.cs" />
   </ItemGroup>

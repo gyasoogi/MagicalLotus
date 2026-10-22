@@ -6,6 +6,27 @@ public class ProjectileCapture : MonoBehaviour
 {
     [SerializeField] private float closeDistance = 0.7f;
     [SerializeField] private float minimumArea = 0.2f;
+    [SerializeField, Min(0.1f)] private float captureRange = 12f;
+    [SerializeField, Range(0.5f, 1f)] private float screenWidthFraction = 0.65f;
+    [SerializeField, Min(0f)] private float energyPerBullet = 1f;
+    public float CaptureRange
+    {
+        get
+        {
+            Camera camera = Camera.main;
+            if (camera == null) return captureRange;
+            float depth = Vector3.Dot(transform.position - camera.transform.position, camera.transform.forward);
+            Vector3 left = camera.ViewportToWorldPoint(new Vector3(0f, 0.5f, depth));
+            Vector3 right = camera.ViewportToWorldPoint(new Vector3(1f, 0.5f, depth));
+            return Mathf.Max(captureRange, Vector3.Distance(left, right) * screenWidthFraction);
+        }
+    }
+    public bool IsInRange(Vector2 position)
+    {
+        Rigidbody2D body = GetComponent<Rigidbody2D>();
+        Vector2 center = body != null ? body.position : (Vector2)transform.position;
+        return Vector2.Distance(center, position) <= CaptureRange;
+    }
 
     private ProjectileStorage storage;
 
@@ -28,16 +49,34 @@ public class ProjectileCapture : MonoBehaviour
         CapturableProjectile[] projectiles =
             FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None);
 
+        List<CapturableProjectile> contained = new List<CapturableProjectile>();
         foreach (CapturableProjectile projectile in projectiles)
         {
-            if (IsInsideShape(projectile.transform.position, closedShape))
-            {
-                storage.Store(projectile);
-                capturedCount++;
-            }
+            if (projectile.CanCapture && IsInRange(projectile.transform.position) && IsInsideShape(projectile.transform.position, closedShape))
+                contained.Add(projectile);
         }
+        capturedCount = storage.StoreBatch(contained);
 
         return true;
+    }
+
+    public void SlowAlongString(List<Vector3> points, bool allowDistantSlow = false)
+    {
+        if (points == null || points.Count < 2) return;
+        foreach (var projectile in FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None))
+        {
+            if (!projectile.CanSlow) continue;
+            bool inRange = IsInRange(projectile.transform.position);
+            if (!inRange && !allowDistantSlow) continue;
+            for (int i = 1; i < points.Count; i++)
+            {
+                Vector2 closest = GetClosestPointOnSegment(projectile.transform.position, points[i - 1], points[i]);
+                if (Vector2.Distance(closest, projectile.transform.position) > 0.2f) continue;
+                projectile.SlowOnString();
+                if (inRange && projectile.TryClaimEnergy()) storage.AddEnergy(energyPerBullet);
+                break;
+            }
+        }
     }
 
     private bool TryFindClosedShape(List<Vector3> points, out List<Vector3> closedShape)

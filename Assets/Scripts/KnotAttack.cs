@@ -9,6 +9,8 @@ public class KnotAttack : MonoBehaviour
     [SerializeField] private float attackRadius = 0.45f;
     [SerializeField] private int attackDamage = 1;
     [SerializeField] private float fallStartSpeed = 2f;
+    [SerializeField, Min(0.1f)] private float minimumAttackPath = 0.75f;
+    [SerializeField, Min(0.1f)] private float movementBeforeDamage = 0.4f;
 
     private readonly HashSet<Enemy> hitEnemies = new HashSet<Enemy>();
     private Rigidbody2D rb;
@@ -17,6 +19,14 @@ public class KnotAttack : MonoBehaviour
     private List<Vector3> path;
     private int pathIndex;
     private float savedGravityScale;
+    private ProjectileStorage storage;
+    private KarmaKeyword attackKeyword;
+    private int keywordPower;
+    private Vector2 attackStart;
+    private bool movedForAttack;
+    private bool useArmedOnMovement;
+    private KarmaMovementEffect movementEffect;
+    public bool HasMovedForAttack => movedForAttack;
 
     public bool IsFollowingPath { get; private set; }
 
@@ -25,6 +35,10 @@ public class KnotAttack : MonoBehaviour
         rb = GetComponent<Rigidbody2D>();
         movement = GetComponent<PlayerMovement>();
         stringDrawer = GetComponent<StringDrawer>();
+        storage = GetComponent<ProjectileStorage>();
+        if (storage == null) storage = gameObject.AddComponent<ProjectileStorage>();
+        movementEffect = GetComponent<KarmaMovementEffect>();
+        if (movementEffect == null) movementEffect = gameObject.AddComponent<KarmaMovementEffect>();
     }
 
     private void FixedUpdate()
@@ -54,6 +68,14 @@ public class KnotAttack : MonoBehaviour
                 remainingMove = 0f;
             }
 
+            if (!movedForAttack && Vector2.Distance(attackStart, rb.position) >= movementBeforeDamage)
+            {
+                movedForAttack = true;
+                if (useArmedOnMovement) storage.TryConsume(out attackKeyword, out keywordPower);
+                movementEffect?.Begin(keywordPower > 0 ? (KarmaKeyword?)attackKeyword : null, keywordPower);
+            }
+            movementEffect?.SetMoving(Vector2.Distance(from, rb.position) > 0.001f);
+
             if (isDrawnSegment)
                 CheckAttackBetween(from, rb.position);
         }
@@ -68,12 +90,31 @@ public class KnotAttack : MonoBehaviour
     {
         if (drawnPath == null || drawnPath.Count < 2) return;
 
+        float length = 0f;
+        float reach = 0f;
+        Vector2 previous = rb.position;
+        foreach (Vector3 point in drawnPath)
+        {
+            length += Vector2.Distance(previous, point);
+            reach = Mathf.Max(reach, Vector2.Distance(rb.position, point));
+            previous = point;
+        }
+        if (length < minimumAttackPath || reach < movementBeforeDamage) return;
+
         CancelPath();
         path = new List<Vector3>(drawnPath.Count);
+        path.Add(rb.position);
         foreach (Vector3 point in drawnPath)
-            path.Add(new Vector3(point.x, point.y, 0f));
+            if (Vector2.Distance(path[path.Count - 1], point) > 0.001f)
+                path.Add(new Vector3(point.x, point.y, 0f));
 
         hitEnemies.Clear();
+        keywordPower = 0;
+        useArmedOnMovement = storage.HasArmedKeyword;
+        storage.ReleaseAttackPreparationSlowMotion();
+        attackStart = rb.position;
+        movedForAttack = false;
+        movementEffect?.Begin(null, 0);
         pathIndex = 0;
         savedGravityScale = rb.gravityScale;
         movement?.SetMovementLocked(true);
@@ -125,9 +166,12 @@ public class KnotAttack : MonoBehaviour
     private void TryHitEnemy(Collider2D hit)
     {
         Enemy enemy = hit.GetComponentInParent<Enemy>();
-        if (enemy == null || !hitEnemies.Add(enemy)) return;
+        if (!movedForAttack || enemy == null || !hitEnemies.Add(enemy)) return;
 
+        float previousHealth = enemy.Health;
         enemy.TakeDamage(attackDamage);
+        if (keywordPower > 0 && !enemy.IsDead)
+            enemy.ApplyKeyword(attackKeyword, keywordPower, previousHealth - enemy.Health, GetComponent<PlayerHealth>());
         CameraShake.Instance?.Play(0.14f, 0.18f);
         HitStop.Instance?.Play(0.075f);
     }
@@ -135,6 +179,7 @@ public class KnotAttack : MonoBehaviour
     private void FinishPath()
     {
         IsFollowingPath = false;
+        movementEffect?.Stop();
         rb.gravityScale = savedGravityScale;
         rb.linearVelocity = new Vector2(0f, -Mathf.Abs(fallStartSpeed));
         movement?.SetMovementLocked(false);

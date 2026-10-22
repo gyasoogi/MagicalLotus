@@ -6,7 +6,6 @@ public class HitStop : MonoBehaviour
     public static HitStop Instance { get; private set; }
 
     private Coroutine routine;
-    private float previousTimeScale = 1f;
 
     private void Awake()
     {
@@ -15,23 +14,29 @@ public class HitStop : MonoBehaviour
 
     public void Play(float duration)
     {
-        if (routine == null) previousTimeScale = Time.timeScale;
-        else StopCoroutine(routine);
+        if (routine != null) StopCoroutine(routine);
 
         routine = StartCoroutine(StopForSeconds(duration));
     }
 
     private IEnumerator StopForSeconds(float duration)
     {
-        Time.timeScale = 0f;
+        GameTimeEffects.Request(this, 0f);
         yield return new WaitForSecondsRealtime(duration);
-        Time.timeScale = previousTimeScale;
+        GameTimeEffects.Release(this);
         routine = null;
     }
 
     private void OnDestroy()
     {
-        if (routine != null) Time.timeScale = previousTimeScale;
+        GameTimeEffects.Release(this);
         if (Instance == this) Instance = null;
+    }
+
+    private void OnDisable()
+    {
+        if (routine != null) StopCoroutine(routine);
+        routine = null;
+        GameTimeEffects.Release(this);
     }
 }
