@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 7100000000000000006}
   - component: {fileID: 7100000000000000007}
   m_Layer: 0
-  m_Name: Capturable Projectile
+  m_Name: CapturableProjectile
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -169,3 +169,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CapturableProjectile
   lifeTime: 8
+  keyword: 0
+  contactDamage: 34
+  absorbable: 1

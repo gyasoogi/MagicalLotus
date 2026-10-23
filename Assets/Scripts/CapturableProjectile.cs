@@ -5,7 +5,7 @@ public class CapturableProjectile : MonoBehaviour
 {
     [SerializeField] private float lifeTime = 8f;
     [SerializeField] private KarmaKeyword keyword;
-    [SerializeField, Min(0f)] private float contactDamage = 10f;
+    [SerializeField, Min(0f)] private float contactDamage = 34f;
     [SerializeField] private bool absorbable = true;
     private bool captured;
     private bool karmaExtracted, energyClaimed;

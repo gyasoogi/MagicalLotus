@@ -5,7 +5,7 @@ using UnityEngine;
 public class EnemyRespawner : MonoBehaviour
 {
     [SerializeField, Min(0f)] private float respawnDelay = 0.75f;
-    [SerializeField, Range(1, 8)] private int simultaneousEnemies = 2;
+    [SerializeField, Range(1, 8)] private int simultaneousEnemies = 1;
     [SerializeField, Min(1f)] private float enemySpacing = 3f;
     private Enemy template;
     private Vector3 spawnPosition;

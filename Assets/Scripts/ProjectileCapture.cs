@@ -39,12 +39,8 @@ public class ProjectileCapture : MonoBehaviour
     {
         capturedCount = 0;
 
-        if (!TryFindClosedShape(drawnPoints, out List<Vector3> closedShape))
+        if (!TryFindClosedShapes(drawnPoints, out List<List<Vector3>> closedShapes))
             return false;
-
-        // Show and use only the part of the line that actually made the loop.
-        drawnPoints.Clear();
-        drawnPoints.AddRange(closedShape);
 
         CapturableProjectile[] projectiles =
             FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None);
@@ -52,8 +48,13 @@ public class ProjectileCapture : MonoBehaviour
         List<CapturableProjectile> contained = new List<CapturableProjectile>();
         foreach (CapturableProjectile projectile in projectiles)
         {
-            if (projectile.CanCapture && IsInRange(projectile.transform.position) && IsInsideShape(projectile.transform.position, closedShape))
+            if (!projectile.CanCapture || !IsInRange(projectile.transform.position)) continue;
+            foreach (List<Vector3> shape in closedShapes)
+            {
+                if (!IsInsideShape(projectile.transform.position, shape)) continue;
                 contained.Add(projectile);
+                break;
+            }
         }
         capturedCount = storage.StoreBatch(contained);
 
@@ -79,74 +80,13 @@ public class ProjectileCapture : MonoBehaviour
         }
     }
 
-    private bool TryFindClosedShape(List<Vector3> points, out List<Vector3> closedShape)
+    private bool TryFindClosedShapes(List<Vector3> points, out List<List<Vector3>> closedShapes)
     {
-        closedShape = null;
+        closedShapes = new List<List<Vector3>>();
         if (points == null || points.Count < 3) return false;
 
-        // Normal case: the end comes back near the beginning.
-        if (Vector2.Distance(points[0], points[points.Count - 1]) <= closeDistance)
-        {
-            List<Vector3> startToEndLoop = new List<Vector3>(points);
-            startToEndLoop.Add(points[0]);
-
-            if (GetArea(startToEndLoop) >= minimumArea)
-            {
-                closedShape = startToEndLoop;
-                return true;
-            }
-        }
-
-        // Any newer part of the line may cross or overlap an older part.
-        if (TryFindLatestCrossing(
-                points,
-                out int crossedSegment,
-                out int closingSegment,
-                out Vector3 crossingPoint))
-        {
-            List<Vector3> crossedLoop = BuildLoop(
-                points,
-                crossedSegment,
-                closingSegment,
-                crossingPoint);
-
-            if (GetArea(crossedLoop) >= minimumArea)
-            {
-                closedShape = crossedLoop;
-                return true;
-            }
-        }
-
-        // A hand-drawn end rarely lands exactly on a line, so allow the same close distance.
-        if (TryFindNearbySegment(points, out int nearbySegment, out Vector3 nearbyPoint))
-        {
-            List<Vector3> nearbyLoop = BuildLoop(
-                points,
-                nearbySegment,
-                points.Count - 1,
-                nearbyPoint);
-
-            if (GetArea(nearbyLoop) >= minimumArea)
-            {
-                closedShape = nearbyLoop;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private bool TryFindLatestCrossing(
-        List<Vector3> points,
-        out int crossedSegment,
-        out int closingSegment,
-        out Vector3 crossingPoint)
-    {
-        crossedSegment = -1;
-        closingSegment = -1;
-        crossingPoint = Vector3.zero;
-        float latestPositionOnLine = -1f;
-
+        // Keep every closed region, including an earlier large loop followed by
+        // a small crossing or tail. Selecting only the last crossing loses bullets.
         for (int newerSegment = 2; newerSegment < points.Count - 1; newerSegment++)
         {
             // Adjacent segments already share a point and do not make a loop.
@@ -158,7 +98,7 @@ public class ProjectileCapture : MonoBehaviour
                         points[newerSegment],
                         points[newerSegment + 1],
                         out Vector2 meetingPoint,
-                        out float amountOnNewerSegment))
+                        out _))
                     continue;
 
                 List<Vector3> possibleLoop = BuildLoop(
@@ -167,19 +107,25 @@ public class ProjectileCapture : MonoBehaviour
                     newerSegment,
                     meetingPoint);
 
-                if (GetArea(possibleLoop) < minimumArea) continue;
-
-                float positionOnLine = newerSegment + amountOnNewerSegment;
-                if (positionOnLine <= latestPositionOnLine) continue;
-
-                latestPositionOnLine = positionOnLine;
-                crossedSegment = olderSegment;
-                closingSegment = newerSegment;
-                crossingPoint = meetingPoint;
+                if (GetArea(possibleLoop) >= minimumArea) closedShapes.Add(possibleLoop);
             }
         }
 
-        return crossedSegment >= 0;
+        if (Vector2.Distance(points[0], points[points.Count - 1]) <= closeDistance)
+        {
+            var wholeLoop = new List<Vector3>(points) { points[0] };
+            // A figure-eight has zero signed area, despite enclosing two regions.
+            if (GetArea(wholeLoop) >= minimumArea || closedShapes.Count > 0)
+                closedShapes.Insert(0, wholeLoop);
+        }
+
+        // Also accept a hand-drawn end landing near an earlier segment.
+        if (TryFindNearbySegment(points, out int nearbySegment, out Vector3 nearbyPoint))
+        {
+            List<Vector3> nearbyLoop = BuildLoop(points, nearbySegment, points.Count - 1, nearbyPoint);
+            if (GetArea(nearbyLoop) >= minimumArea) closedShapes.Add(nearbyLoop);
+        }
+        return closedShapes.Count > 0;
     }
 
     private bool TryFindNearbySegment(
@@ -338,6 +284,8 @@ public class ProjectileCapture : MonoBehaviour
         {
             Vector2 a = shape[i];
             Vector2 b = shape[j];
+            if ((point - GetClosestPointOnSegment(point, a, b)).sqrMagnitude <= 0.0004f)
+                return true;
 
             bool crossesHeight = (a.y > point.y) != (b.y > point.y);
             if (!crossesHeight) continue;

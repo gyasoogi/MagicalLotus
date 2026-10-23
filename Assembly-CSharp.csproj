@@ -49,25 +49,26 @@
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\6000.3.4f1\Editor\Data\Tools\BuildPipeline\Unity.SourceGenerators\Unity.UIToolkit.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Assets\Scripts\ProjectileCapture.cs" />
-    <Compile Include="Assets\Scripts\PlayerHealth.cs" />
-    <Compile Include="Assets\Scripts\DrawingModeController.cs" />
-    <Compile Include="Assets\Scripts\KarmaKeyword.cs" />
-    <Compile Include="Assets\Scripts\EnemyHitEffect.cs" />
-    <Compile Include="Assets\Scripts\Enemy.cs" />
-    <Compile Include="Assets\Scripts\GameTimeEffects.cs" />
-    <Compile Include="Assets\Scripts\StringDrawer.cs" />
     <Compile Include="Assets\Scripts\KarmaOutbreak.cs" />
     <Compile Include="Assets\Scripts\DrawingScreenEffect.cs" />
+    <Compile Include="Assets\Scripts\ProjectileCapture.cs" />
     <Compile Include="Assets\Scripts\Knot.cs" />
+    <Compile Include="Assets\Scripts\KarmaExplosionEffect.cs" />
     <Compile Include="Assets\Scripts\PlayerJump.cs" />
+    <Compile Include="Assets\Scripts\PlayerHealth.cs" />
     <Compile Include="Assets\Scripts\CameraShake.cs" />
+    <Compile Include="Assets\Scripts\DrawingModeController.cs" />
     <Compile Include="Assets\Scripts\PlayerMovement.cs" />
+    <Compile Include="Assets\Scripts\KarmaKeyword.cs" />
     <Compile Include="Assets\Scripts\KarmaBeadHud.cs" />
+    <Compile Include="Assets\Scripts\EnemyHitEffect.cs" />
     <Compile Include="Assets\Scripts\CapturableProjectile.cs" />
+    <Compile Include="Assets\Scripts\Enemy.cs" />
+    <Compile Include="Assets\Scripts\GameTimeEffects.cs" />
     <Compile Include="Assets\Scripts\GameRestartController.cs" />
     <Compile Include="Assets\Scripts\KarmaMovementEffect.cs" />
     <Compile Include="Assets\Scripts\KnotAttack.cs" />
+    <Compile Include="Assets\Scripts\StringDrawer.cs" />
     <Compile Include="Assets\Scripts\HitStop.cs" />
     <Compile Include="Assets\Scripts\EnemyRespawner.cs" />
     <Compile Include="Assets\Scripts\DefensiveStringShield.cs" />

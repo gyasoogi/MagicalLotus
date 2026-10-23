@@ -173,9 +173,10 @@ public static class KarmaPlayValidation
         List<CapturableProjectile> bullets = new List<CapturableProjectile>();
         for (int i = 0; i < count; i++) bullets.Add(Bullet(keyword, new Vector2(50 + i * 0.01f, 50)));
         storage.AddEnergy(count * 3);
-        int capacity = 8;
+        int capacity = 0;
         foreach (var bead in storage.Beads)
-            if (!bead.IsEmpty && !bead.IsRotten && bead.keyword == keyword) capacity -= bead.power;
+            if (bead.IsEmpty) capacity += 8;
+            else if (!bead.IsRotten && bead.keyword == keyword) capacity += 8 - bead.power;
         Check(storage.StoreBatch(bullets) == Mathf.Min(count, capacity), "Batch stored " + keyword + " x" + count);
     }
 
@@ -205,6 +206,103 @@ public static class KarmaPlayValidation
             RenderTexture.ReleaseTemporary(target);
             UnityEngine.Object.Destroy(frame);
         }
+    }
+
+    private static void ClearCaptureFixture()
+    {
+        foreach (var bullet in UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None))
+            UnityEngine.Object.Destroy(bullet.gameObject);
+        ClearBeads(); Set(storage, "energy", 0f);
+    }
+
+    private static IEnumerator MultiCaptureChecks()
+    {
+        ClearCaptureFixture(); yield return null;
+        Vector2 center = player.GetComponent<Rigidbody2D>().position + Vector2.right * 3f;
+        var batch = new List<CapturableProjectile>();
+        for (int kind = 0; kind < 4; kind++)
+            for (int i = 0; i < 2; i++)
+                batch.Add(Bullet((KarmaKeyword)kind, center + new Vector2(-0.6f + kind * 0.4f, i == 0 ? -0.4f : 0.4f)));
+        var outside = Bullet(KarmaKeyword.Poison, center + Vector2.right * 1.5f);
+        var forbidden = Bullet(KarmaKeyword.Dark, center);
+        forbidden.SetAbsorbable(false);
+        var loop = Loop(center);
+        Check(capture.TryCaptureClosedShape(loop, out int count) && count == 8,
+            "Zero-energy closed shape captures all eight mixed-keyword bullets in one batch");
+        Check(storage.StoredProjectileCount == 8 && Array.TrueForAll(batch.ToArray(), bullet => bullet.KarmaExtracted
+            && bullet.gameObject.activeInHierarchy && bullet.CanSlow),
+            "Every captured batch bullet stays active and is marked extracted");
+        for (int i = 0; i < 4; i++)
+            Check(storage.Beads[i].keyword == (KarmaKeyword)i && storage.Beads[i].power == 2,
+                "Mixed batch stores both bullets for " + (KarmaKeyword)i);
+        MaterialPropertyBlock bodyColor = new MaterialPropertyBlock();
+        Check(Array.TrueForAll(batch.ToArray(), bullet => {
+            bullet.GetComponent<Renderer>().GetPropertyBlock(bodyColor);
+            return bodyColor.GetColor("_Color") == Color.gray;
+        }), "All extracted bullets turn gray across the whole batch");
+        Check(!outside.KarmaExtracted && outside.CanCapture && !forbidden.KarmaExtracted,
+            "Batch capture excludes outside and unabsorbable bullets");
+        capture.TryCaptureClosedShape(loop, out count);
+        Check(count == 0 && storage.StoredProjectileCount == 8, "Repeating a captured shape cannot duplicate batch karma");
+
+        ClearCaptureFixture(); yield return null;
+        Load(KarmaKeyword.Poison, 7);
+        for (int i = 0; i < 12; i++) Bullet(KarmaKeyword.Poison, center + new Vector2(i * 0.03f, 0));
+        Set(storage, "energy", 0f);
+        Check(capture.TryCaptureClosedShape(Loop(center), out count) && count == 12,
+            "Batch capture takes every bullet even when matching bead has only one space left");
+        Check(storage.Beads[0].power == 8 && storage.Beads[1].power == 8 && storage.Beads[2].power == 3
+            && storage.StoredProjectileCount == 19, "Matching-keyword overflow fills additional empty beads without dropping bullets");
+
+        ClearCaptureFixture(); yield return null;
+        foreach (Vector2 offset in new[] { new Vector2(-0.5f,-0.5f), new Vector2(0.5f,-0.5f),
+            new Vector2(-0.5f,0.5f), new Vector2(0.5f,0.5f), new Vector2(2.5f,1.5f) })
+            Bullet(KarmaKeyword.Curse, center + offset);
+        outside = Bullet(KarmaKeyword.Light, center + new Vector2(4f, 0));
+        var twoLoopsAndTail = new List<Vector3>();
+        foreach (Vector2 offset in new[] { new Vector2(-1,-1), new Vector2(1,-1), new Vector2(1,1),
+            new Vector2(-1,1), new Vector2(-1,-1), new Vector2(2,1), new Vector2(3,1), new Vector2(3,2),
+            new Vector2(2,2), new Vector2(2,1), new Vector2(4,1) }) twoLoopsAndTail.Add(center + offset);
+        Check(capture.TryCaptureClosedShape(twoLoopsAndTail, out count) && count == 5,
+            "Large loop plus a later small loop and open tail captures bullets in both closed regions");
+        Check(outside.CanCapture, "Open tail does not capture bullets outside closed regions");
+
+        ClearCaptureFixture(); yield return null;
+        Bullet(KarmaKeyword.Light, center + Vector2.up * 0.65f);
+        Bullet(KarmaKeyword.Dark, center + Vector2.down * 0.65f);
+        var figureEight = new List<Vector3>();
+        foreach (Vector2 offset in new[] { new Vector2(-1,-1), new Vector2(1,1), new Vector2(-1,1),
+            new Vector2(1,-1), new Vector2(-1,-1) }) figureEight.Add(center + offset);
+        Check(capture.TryCaptureClosedShape(figureEight, out count) && count == 2,
+            "Self-crossing figure-eight captures both lobes despite zero net signed area");
+
+        ClearCaptureFixture(); yield return null;
+        Bullet(KarmaKeyword.Poison, center + Vector2.right);
+        Bullet(KarmaKeyword.Poison, center + Vector2.right + Vector2.up);
+        outside = Bullet(KarmaKeyword.Poison, center + Vector2.right * 1.25f);
+        Check(capture.TryCaptureClosedShape(Loop(center), out count) && count == 2 && outside.CanCapture,
+            "Bullets centered on the loop edge or corner are captured while outside bullets remain");
+
+        ClearCaptureFixture(); yield return null;
+        var duplicate = Bullet(KarmaKeyword.Poison, center);
+        Check(storage.StoreBatch(new List<CapturableProjectile> { duplicate, null, duplicate }) == 1
+            && storage.StoredProjectileCount == 1, "Batch storage ignores duplicate and null entries");
+
+        ClearCaptureFixture(); yield return null;
+        for (int i = 0; i < 9; i++) Bullet((KarmaKeyword)(i % 4), center + new Vector2((i % 3 - 1) * 0.4f, (i / 3 - 1) * 0.4f));
+        virtualMouse = InputSystem.AddDevice<Mouse>();
+        KarmaBeadHud hud = player.GetComponent<KarmaBeadHud>();
+        loop = Loop(center);
+        Pointer(hud, ScreenPoint(loop[0]), true, true);
+        for (int i = 1; i < loop.Count; i++) Pointer(hud, ScreenPoint(loop[i]), true, true);
+        Pointer(hud, ScreenPoint(loop[loop.Count - 1]), false, true);
+        Check(storage.StoredProjectileCount == 9,
+            $"Actual right-drag release captures all nine enclosed bullets with zero energy ({storage.StoredProjectileCount}/9)");
+        Near(Time.timeScale, 5, "Multi-bullet right-drag release restores prior world speed");
+        Check(UnityEngine.Object.FindObjectsByType<DefensiveStringShield>(FindObjectsSortMode.None).Length == 0,
+            "Multi-bullet closed shape does not leave an open-stroke shield");
+        InputSystem.RemoveDevice(virtualMouse); virtualMouse = null;
+        ClearCaptureFixture(); yield return null;
     }
 
     private static IEnumerator CombatInputChecks()
@@ -327,13 +425,10 @@ public static class KarmaPlayValidation
             "Slowed projectile keeps moving and remains present");
         var loop = Loop(bullet.transform.position);
         capture.TryCaptureClosedShape(loop, out int count);
-        Check(count == 0 && bullet.CanCapture, "Insufficient energy cannot extract karma");
-        storage.AddEnergy(2);
-        capture.TryCaptureClosedShape(loop, out count);
         Check(count == 1 && bullet.KarmaExtracted && bullet.gameObject.activeInHierarchy && bullet.CanSlow,
             "Nearby extraction yields karma while leaving bullet active and dangerous");
-        Near(storage.Energy, 0, "Karma extraction spends three energy per bullet");
-        storage.AddEnergy(3);
+        Near(storage.Energy, 1, "Default closed-loop capture does not stop for insufficient energy or spend contact energy");
+        storage.AddEnergy(2);
         capture.TryCaptureClosedShape(loop, out count);
         Check(count == 0 && storage.Energy == 3, "Already extracted projectile cannot generate duplicate karma");
         UnityEngine.Object.Destroy(bullet.gameObject);
@@ -624,8 +719,8 @@ public static class KarmaPlayValidation
             "Restart clears dash and cooldown state");
         Check(storage.StoredProjectileCount == 0 && storage.Energy == 0 && !storage.HasArmedKeyword && !storage.IsExtractionActive,
             "Restart clears beads energy and pending karma");
-        Check(spawner.AliveCount == 2 && UnityEngine.Object.FindObjectsByType<GameRestartController>(FindObjectsSortMode.None).Length == 1,
-            "Restart recreates exactly two enemies and one restart controller");
+        Check(spawner.AliveCount == 1 && UnityEngine.Object.FindObjectsByType<GameRestartController>(FindObjectsSortMode.None).Length == 1,
+            "Restart recreates exactly one enemy and one restart controller");
         Check(UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None).Length == 0
             && UnityEngine.Object.FindObjectsByType<DefensiveStringShield>(FindObjectsSortMode.None).Length == 0
             && UnityEngine.Object.FindObjectsByType<KarmaOutbreak>(FindObjectsSortMode.None).Length == 0,
@@ -670,24 +765,124 @@ public static class KarmaPlayValidation
         InputSystem.RemoveDevice(virtualKeyboard); virtualKeyboard = null;
     }
 
+    private static IEnumerator ThreeHitCombatChecks()
+    {
+        GameObject obj = new GameObject("Three-hit combat validation target");
+        obj.transform.position = player.transform.position + Vector3.up * 20f;
+        Rigidbody2D body = obj.AddComponent<Rigidbody2D>();
+        body.bodyType = RigidbodyType2D.Kinematic;
+        obj.AddComponent<CircleCollider2D>();
+        PlayerHealth health = obj.AddComponent<PlayerHealth>();
+        Near(health.Health, 100f, "Three-hit target starts at 100 health");
+        for (int hit = 1; hit <= 3; hit++)
+        {
+            CapturableProjectile bullet = UnityEngine.Object.Instantiate(projectilePrefab, obj.transform.position + Vector3.right, Quaternion.identity);
+            bullet.GetComponent<Rigidbody2D>().gravityScale = 0f;
+            bullet.Launch(Vector2.left * 4f);
+            yield return Wait(0.4f);
+            Near(health.Health, Mathf.Max(0f, 100f - 34f * hit), "Actual projectile hit " + hit + " has the expected health result");
+            Check(health.IsDead == (hit == 3), "Player survives hits one and two and dies exactly on hit three: " + hit);
+        }
+        UnityEngine.Object.Destroy(obj);
+        yield return null;
+
+        obj = new GameObject("Three-hit outbreak validation target");
+        obj.transform.position = player.transform.position + Vector3.up * 20f;
+        health = obj.AddComponent<PlayerHealth>();
+        for (int hit = 1; hit <= 3; hit++)
+        {
+            KarmaOutbreak blast = KarmaOutbreak.Spawn(health, 2f, (float)Get(storage, "outbreakDamage"), 1f);
+            Call(blast, "Explode");
+            Check(health.IsDead == (hit == 3), "Outbreak damage also respects the three-hit baseline: " + hit);
+        }
+        UnityEngine.Object.Destroy(obj);
+        yield return WaitReal(1.05f);
+    }
+
+    private static IEnumerator ExplosionEffectChecks()
+    {
+        foreach (var oldEffect in UnityEngine.Object.FindObjectsByType<KarmaExplosionEffect>(FindObjectsSortMode.None))
+            UnityEngine.Object.Destroy(oldEffect.gameObject);
+        yield return null;
+        Vector2 origin = player.GetComponent<Rigidbody2D>().position;
+        float hp = player.Health;
+        KarmaOutbreak blast = KarmaOutbreak.Spawn(player, 2f, 7f, 1f);
+        Near(blast.ExplosionRadius, 3.5f, "Outbreak blast radius increases from 1.25 to 3.5 units");
+        LineRenderer warning = blast.transform.Find("Outbreak Blast Radius").GetComponent<LineRenderer>();
+        Near(((Vector2)warning.GetPosition(0)).magnitude, blast.ExplosionRadius,
+            "Outbreak warning circle matches the actual damage radius");
+        blast.transform.position = origin + Vector2.right * 2.8f;
+        Call(blast, "Explode"); Call(blast, "Explode");
+        Near(player.Health, hp - 7f, "Expanded blast hits beyond the old radius and cannot deal duplicate damage");
+        KarmaExplosionEffect effect = UnityEngine.Object.FindFirstObjectByType<KarmaExplosionEffect>();
+        Check(effect != null && effect.transform.parent == null && effect.Radius == 3.5f,
+            "Explosion creates an independent effect with the same wide radius");
+        Check(effect.GetComponentsInChildren<LineRenderer>().Length == 4,
+            "Explosion renders three expanding shockwaves and a damage boundary");
+        int particleCount = 0;
+        bool unscaledParticles = true;
+        foreach (ParticleSystem particles in effect.GetComponentsInChildren<ParticleSystem>())
+        {
+            particleCount += particles.particleCount;
+            unscaledParticles &= particles.main.useUnscaledTime;
+        }
+        Check(particleCount >= 130 && unscaledParticles,
+            "Wide explosion emits over 130 ember and smoke particles using real time");
+        yield return WaitReal(0.13f);
+        RenderProbe("karma-outbreak-explosion");
+        object slowOwner = new object();
+        GameTimeEffects.Request(slowOwner, 0.03f);
+        yield return WaitReal(1f);
+        Check(effect == null, "Explosion visuals finish and clean up during strong world slow motion");
+        GameTimeEffects.Release(slowOwner);
+        Near(Time.timeScale, 1, "Explosion visuals do not leave a world time effect behind");
+
+        hp = player.Health;
+        blast = KarmaOutbreak.Spawn(player, 2f, 7f, 1f);
+        blast.transform.position = origin + Vector2.right * (blast.ExplosionRadius + 0.1f);
+        Call(blast, "Explode");
+        Near(player.Health, hp, "Player beyond the enlarged blast radius avoids damage");
+        foreach (var oldEffect in UnityEngine.Object.FindObjectsByType<KarmaExplosionEffect>(FindObjectsSortMode.None))
+            UnityEngine.Object.Destroy(oldEffect.gameObject);
+        yield return null;
+
+        GameObject temporaryTarget = new GameObject("Fatal explosion verification target");
+        temporaryTarget.transform.position = origin;
+        PlayerHealth temporaryHealth = temporaryTarget.AddComponent<PlayerHealth>();
+        temporaryHealth.TakeDamage(95f);
+        blast = KarmaOutbreak.Spawn(temporaryHealth, 2f, 10f, 1f);
+        Call(blast, "Explode");
+        effect = UnityEngine.Object.FindFirstObjectByType<KarmaExplosionEffect>();
+        Check(temporaryHealth.IsDead && effect != null, "Fatal outbreak damage still creates the complete explosion effect");
+        UnityEngine.Object.Destroy(temporaryTarget);
+        yield return WaitReal(0.15f);
+        Check(effect != null, "Explosion keeps playing after the target and orb are destroyed");
+        yield return WaitReal(0.95f);
+        Check(effect == null && UnityEngine.Object.FindObjectsByType<KarmaExplosionEffect>(FindObjectsSortMode.None).Length == 0,
+            "Fatal explosion particles and visual objects are fully cleaned up");
+    }
+
     private static IEnumerator Run()
     {
         yield return null; yield return null;
+        InputSystem.settings.editorInputBehaviorInPlayMode = InputSettings.EditorInputBehaviorInPlayMode.AllDeviceInputAlwaysGoesToGameView;
+        InputSystem.settings.backgroundBehavior = InputSettings.BackgroundBehavior.IgnoreFocus;
         player = UnityEngine.Object.FindFirstObjectByType<PlayerHealth>();
         storage = player.GetComponent<ProjectileStorage>();
         capture = player.GetComponent<ProjectileCapture>();
         spawner = UnityEngine.Object.FindFirstObjectByType<EnemyRespawner>();
         projectilePrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Prefabs/CapturableProjectile.prefab").GetComponent<CapturableProjectile>();
+        Near((float)Get(projectilePrefab, "contactDamage"), 34f, "Actual projectile prefab explicitly stores 34 damage");
         Check(player != null && storage != null && capture != null && spawner != null, "Main scene runtime initialization");
         Check(player.GetComponent<KarmaBeadHud>() != null && storage.Beads.Count == 8, "HUD and eight bead slots");
         Check(player.GetComponent<GameRestartController>() != null, "Death restart is connected automatically");
         Near(player.Health, 100, "Player starts at one hundred health");
-        Near(player.MaxHealth, 200, "Player health ceiling is two hundred");
+        Near(player.MaxHealth, 100, "Player health ceiling stays at one hundred for three-hit combat");
         player.HealMissingFraction(2f);
-        Near(player.Health, 200, "Healing grows health up to two hundred and never overflows");
-        Check(spawner.AliveCount == 2, "Two active enemies initially");
-        Check(spawner.CurrentEnemy.GetComponent<EnemyProjectileThrower>().ProjectilesPerVolley == 4,
-            "Reduced enemy volley defaults to four bullets");
+        Near(player.Health, 100, "Healing cannot increase health above the three-hit baseline");
+        Check(spawner.AliveCount == 1, "One active enemy initially");
+        Check(spawner.CurrentEnemy.GetComponent<EnemyProjectileThrower>().ProjectilesPerVolley == 1,
+            "Enemy always fires one bullet at a time");
         Near(spawner.CurrentEnemy.GetComponent<EnemyProjectileThrower>().ThrowInterval, 3f, "Enemy firing interval is reduced to one volley every three seconds");
         Transform expectedTarget = (Transform)Get(spawner.CurrentEnemy.GetComponent<EnemyProjectileThrower>(), "target");
         player.GetComponent<PlayerMovement>().enabled = false;
@@ -699,6 +894,8 @@ public static class KarmaPlayValidation
         foreach (Enemy activeEnemy in spawner.AliveEnemies) activeEnemy.GetComponent<EnemyProjectileThrower>().enabled = false;
         foreach (var bullet in UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None)) UnityEngine.Object.Destroy(bullet.gameObject);
         Time.timeScale = 5f;
+
+        yield return MultiCaptureChecks();
 
         // Actual closed-loop geometry and batch strength.
         ClearBeads();
@@ -722,15 +919,16 @@ public static class KarmaPlayValidation
         Near(Time.timeScale, 5, "Consuming karma immediately restores prior time scale");
         Check(!storage.IsExtractionActive, "Consuming karma immediately ends extraction tint and timer");
         ClearBeads(); Load(KarmaKeyword.Poison, 10);
-        Check(storage.Beads[0].power == 8, "Multi-capture strength caps at eight");
+        Check(storage.Beads[0].power == 8 && storage.Beads[1].power == 2 && storage.StoredProjectileCount == 10,
+            "Multi-capture fills an eight-power bead then spills into the next free bead");
         ClearBeads(); Load(KarmaKeyword.Poison, 2);
-        storage.Beads[0].remaining = 10;
+        storage.Beads[0].remaining = storage.Beads[0].lifetime * 0.5f;
         Color oldColor = KarmaBeadHud.BeadColor(storage.Beads[0]);
         Load(KarmaKeyword.Poison, 3);
         Check(storage.Beads[0].power == 5 && storage.Beads[1].IsEmpty, "Same keyword merges across separate captures and increases strength");
         Near(storage.Beads[0].Freshness, 1, "Merging refreshes bead lifetime");
         Check(KarmaBeadHud.BeadColor(storage.Beads[0]).grayscale > oldColor.grayscale, "Refreshed bead regains its color");
-        storage.Beads[0].remaining = 10;
+        storage.Beads[0].remaining = storage.Beads[0].lifetime * 0.5f;
         Near(KarmaBeadHud.BeadColor(storage.Beads[0]).g, KarmaBeadHud.KeywordColor(KarmaKeyword.Poison).g * 0.5f, "Half lifetime renders half brightness");
         storage.Beads[0].remaining = 0;
         Check(KarmaBeadHud.BeadColor(storage.Beads[0]) == Color.black, "Expired bead becomes black");
@@ -757,13 +955,18 @@ public static class KarmaPlayValidation
         InputSystem.RemoveDevice(virtualKeyboard); virtualKeyboard = null;
         ClearBeads(); Load(KarmaKeyword.Light);
         float beforePause = storage.Beads[0].remaining;
+        Near(beforePause, 5f, "Fresh karma now decays in five seconds instead of twenty");
         Time.timeScale = 0;
         double resume = EditorApplication.timeSinceStartup + 0.2;
         while (EditorApplication.timeSinceStartup < resume) yield return null;
         Near(storage.Beads[0].remaining, beforePause, "Paused game does not decay beads");
+        Time.timeScale = 0.03f;
+        yield return WaitReal(0.35f);
+        Check(storage.Beads[0].remaining < beforePause - 0.25f,
+            "Strong drawing slow motion does not stretch karma decay time");
         Time.timeScale = 5;
-        yield return Wait(20.2f);
-        Check(storage.Beads[0].IsRotten && !storage.Beads[0].IsEmpty, "Twenty seconds makes bead rotten without freeing slot");
+        yield return WaitReal(4.85f);
+        Check(storage.Beads[0].IsRotten && !storage.Beads[0].IsEmpty, "Five real seconds makes bead rotten without freeing slot");
         Check(!storage.TryConsume(out _, out _), "Rotten bead cannot activate");
         Check(!storage.TryArmFromSlot(0, Vector3.zero), "Rotten bead cannot be dropped to arm");
         Load(KarmaKeyword.Curse);
@@ -939,35 +1142,40 @@ public static class KarmaPlayValidation
         var existingBullets = new HashSet<CapturableProjectile>(UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None));
         Call(thrower, "ThrowProjectile");
         var emitted = Array.FindAll(UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None), bullet => !existingBullets.Contains(bullet));
-        Check(emitted.Length == 4, "Enemy emits exactly four bullets in a single volley");
+        Check(emitted.Length == 1, "Enemy emits exactly one bullet in a single attack");
         HashSet<Vector2> velocities = new HashSet<Vector2>();
         foreach (var bullet in emitted)
         {
             velocities.Add(bullet.GetComponent<Rigidbody2D>().linearVelocity);
-            Check(bullet.Keyword == KarmaKeyword.Poison, "All four volley bullets share one keyword");
+            Check(bullet.Keyword == KarmaKeyword.Poison, "First single shot has the poison keyword");
         }
         MaterialPropertyBlock bulletColor = new MaterialPropertyBlock();
         emitted[0].GetComponent<Renderer>().GetPropertyBlock(bulletColor);
         Check(bulletColor.GetColor("_Color") == KarmaBeadHud.KeywordColor(KarmaKeyword.Poison),
             "Actual mesh projectile renderer displays its keyword color");
-        Check(velocities.Count == 4, "Four simultaneous bullets have distinct fan directions");
+        Check(velocities.Count == 1, "Single-shot attack creates only one aimed trajectory");
         Near((float)Get(emitted[emitted.Length - 1], "sourceDamageMultiplier"), 0.9f, "New projectiles inherit dark weakness");
         Call(thrower, "ThrowProjectile");
         emitted = Array.FindAll(UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None), bullet => !existingBullets.Contains(bullet));
-        Check(emitted.Length == 8 && Array.FindAll(emitted, bullet => bullet.Keyword == KarmaKeyword.Curse).Length == 4,
-            "Second volley cycles all four bullets to next keyword");
+        Check(emitted.Length == 2 && Array.FindAll(emitted, bullet => bullet.Keyword == KarmaKeyword.Curse).Length == 1,
+            "Second attack adds one bullet and cycles to the next keyword");
         Call(thrower, "ThrowProjectile");
         emitted = Array.FindAll(UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None), bullet => !existingBullets.Contains(bullet));
-        Check(Array.FindAll(emitted, bullet => !bullet.IsAbsorbable).Length == 1,
-            "Every third volley contains one unabsorbable red-ring projectile");
+        Check(emitted.Length == 3 && Array.TrueForAll(emitted, bullet => bullet.IsAbsorbable && bullet.CanCapture),
+            "Third shot remains capturable instead of creating a red-ring special bullet");
+        for (int i = 3; i < 12; i++) Call(thrower, "ThrowProjectile");
+        emitted = Array.FindAll(UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None), bullet => !existingBullets.Contains(bullet));
+        Check(emitted.Length == 12 && Array.TrueForAll(emitted, bullet => bullet.IsAbsorbable),
+            "Twelve consecutive attacks produce twelve capturable single bullets");
         foreach (var bullet in UnityEngine.Object.FindObjectsByType<CapturableProjectile>(FindObjectsSortMode.None)) UnityEngine.Object.Destroy(bullet.gameObject);
         yield return null;
+        player.HealMissingFraction(1f);
         var contact = UnityEngine.Object.Instantiate(projectilePrefab, player.transform.position + Vector3.right, Quaternion.identity);
         contact.GetComponent<Rigidbody2D>().gravityScale = 0;
         contact.Launch(Vector2.left * 4);
         hp = player.Health;
         yield return Wait(0.5f);
-        Near(player.Health, hp - 10, "Projectile contact deals damage once");
+        Near(player.Health, hp - 34, "Projectile contact deals 34 damage once");
 
         // Outbreak retains normal beads, empties only rotten beads, cannot be captured, tracks and hits once.
         ClearBeads(); Load(KarmaKeyword.Poison); Load(KarmaKeyword.Curse); Load(KarmaKeyword.Light); Load(KarmaKeyword.Dark);
@@ -985,6 +1193,7 @@ public static class KarmaPlayValidation
         Check(!storage.OutbreakWarningActive, "Using a warned bead cancels outbreak below threshold");
         yield return WaitReal(3.15f);
         Load(KarmaKeyword.Poison); storage.Beads[0].remaining = 0;
+        Load(KarmaKeyword.Dark); // Refresh the healthy control bead for the five-second decay rule.
         Time.timeScale = 1f;
         yield return null; yield return null;
         Check(storage.OutbreakWarningActive, "Ignoring new rotten accumulation warns again");
@@ -1005,7 +1214,7 @@ public static class KarmaPlayValidation
         yield return WaitReal(0.55f);
         Check(Vector2.Distance(orb.transform.position, player.transform.position) < Vector2.Distance(startOrb, player.transform.position), "Outbreak moves toward player");
         yield return Wait(1.4f);
-        Near(player.Health, Mathf.Max(0, hp - 45), "Three-bead outbreak deals 45 damage once");
+        Near(player.Health, Mathf.Max(0, hp - 34), "Outbreak deals one 34-damage hit regardless of rotten bead count");
         Check(UnityEngine.Object.FindFirstObjectByType<KarmaOutbreak>() == null, "Outbreak disappears on contact");
         Check(!player.IsDead, "Player remains alive for remaining checks");
         foreach (Enemy activeEnemy in spawner.AliveEnemies) Call(activeEnemy, "RemovePolarity");
@@ -1021,11 +1230,14 @@ public static class KarmaPlayValidation
         yield return WaitReal(0.3f);
         playerBody.position = dodgeOrigin; playerBody.linearVelocity = Vector2.zero;
 
+        yield return ExplosionEffectChecks();
+        yield return ThreeHitCombatChecks();
+
         ClearBeads();
         for (int i = 0; i < 5; i++)
         {
             yield return FreshEnemy();
-            Check(spawner.AliveCount == 2, "Respawn cycle " + (i + 1) + " maintains two enemies without over-spawning");
+            Check(spawner.AliveCount == 1, "Respawn cycle " + (i + 1) + " maintains one enemy without over-spawning");
             Check(spawner.CurrentEnemy.Health == 3 && spawner.CurrentEnemy.CurseStacks == 0
                 && Mathf.Approximately(spawner.CurrentEnemy.OutgoingDamageMultiplier, 1), "Respawn resets health and statuses");
             Check((Transform)Get(spawner.CurrentEnemy.GetComponent<EnemyProjectileThrower>(), "target") == expectedTarget, "Respawn retains original player target");

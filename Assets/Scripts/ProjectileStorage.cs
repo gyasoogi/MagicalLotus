@@ -4,15 +4,15 @@ using UnityEngine;
 [RequireComponent(typeof(PlayerHealth))]
 public class ProjectileStorage : MonoBehaviour
 {
-    [SerializeField, Min(1f)] private float decaySeconds = 20f;
+    [SerializeField, Min(1f)] private float decaySeconds = 5f;
     [SerializeField, Range(1, 8)] private int outbreakThreshold = 3;
     [SerializeField, Min(0.1f)] private float outbreakSpeed = 2f;
-    [SerializeField, Min(0f)] private float outbreakDamage = 15f;
+    [SerializeField, Min(0f)] private float outbreakDamage = 34f;
     [SerializeField, Min(1f)] private float outbreakLifetime = 20f;
     [SerializeField, Min(0f)] private float outbreakWarningSeconds = 2f;
     [SerializeField, Range(0.01f, 1f)] private float warningTimeScale = 0.35f;
     [SerializeField, Min(1f)] private float maxEnergy = 100f;
-    [SerializeField, Min(0.1f)] private float energyPerKarma = 3f;
+    [SerializeField, Min(0f)] private float energyPerKarma = 0f;
     private float energy;
     private float warningEnds;
     private readonly object warningOwner = new object();
@@ -60,7 +60,8 @@ public class ProjectileStorage : MonoBehaviour
         foreach (KarmaBead bead in beads)
         {
             if (bead.IsEmpty) continue;
-            bead.remaining = Mathf.Max(0f, bead.remaining - Time.deltaTime);
+            if (Time.timeScale > 0f)
+                bead.remaining = Mathf.Max(0f, bead.remaining - Time.unscaledDeltaTime);
             if (bead.IsRotten) rotten++;
         }
         if (rotten < Mathf.Clamp(outbreakThreshold, 1, beads.Length)) { CancelWarning(); return; }
@@ -76,7 +77,7 @@ public class ProjectileStorage : MonoBehaviour
         foreach (KarmaBead bead in beads)
             if (bead.IsRotten) bead.Clear();
         KarmaOutbreak.Spawn(GetComponent<PlayerHealth>(), outbreakSpeed,
-            outbreakDamage * rotten, outbreakLifetime);
+            outbreakDamage, outbreakLifetime);
     }
 
     private void CancelWarning() { warningEnds = 0f; GameTimeEffects.Release(warningOwner); }
@@ -99,23 +100,21 @@ public class ProjectileStorage : MonoBehaviour
         HashSet<CapturableProjectile> available = new HashSet<CapturableProjectile>(projectiles);
         for (int kind = 0; kind < 4; kind++)
         {
-            KarmaBead destination = System.Array.Find(beads, bead => !bead.IsEmpty && !bead.IsRotten && (int)bead.keyword == kind)
-                ?? System.Array.Find(beads, bead => bead.IsEmpty);
-            if (destination == null || destination.power >= 8) continue;
-            int count = 0;
             foreach (var projectile in available)
             {
-                if (destination.power + count >= 8 || energy < energyPerKarma) break;
                 if (projectile == null || !projectile.CanCapture || (int)projectile.Keyword != kind) continue;
+                KarmaBead destination = System.Array.Find(beads, bead => !bead.IsEmpty && !bead.IsRotten
+                    && bead.power < 8 && (int)bead.keyword == kind)
+                    ?? System.Array.Find(beads, bead => bead.IsEmpty);
+                if (destination == null) continue;
+                if (energy < energyPerKarma) return captured;
                 if (!projectile.TryClaimKarma()) continue;
                 energy -= energyPerKarma;
-                count++;
+                destination.keyword = (KarmaKeyword)kind;
+                destination.power++;
+                destination.lifetime = destination.remaining = Mathf.Max(1f, decaySeconds);
                 captured++;
             }
-            if (count == 0) continue;
-            destination.keyword = (KarmaKeyword)kind;
-            destination.power = Mathf.Min(8, destination.power + count);
-            destination.lifetime = destination.remaining = Mathf.Max(1f, decaySeconds);
         }
         return captured;
     }
