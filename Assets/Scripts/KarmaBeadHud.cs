@@ -53,10 +53,12 @@ public class KarmaBeadHud : MonoBehaviour
         }
     }
     private static float Scale => Mathf.Max(0.1f, Mathf.Min(Screen.width / 1000f, Screen.height / 600f));
+    private const float PanelWidth = ProjectileStorage.SlotCount * 72f + 54f;
     private static Rect SlotRect(int index, float width, float height)
     {
-        float size = 48f + (3.5f - Mathf.Abs(index - 3.5f)) * 5f;
-        return new Rect(width / 2f - 280f + index * 72f, height - 92f, size, size);
+        float centerIndex = (ProjectileStorage.SlotCount - 1) * 0.5f;
+        float size = 58f + (centerIndex - Mathf.Abs(index - centerIndex)) * 5f;
+        return new Rect(width / 2f + (index - centerIndex) * 72f - size / 2f, height - 92f, size, size);
     }
     public Rect GetSlotScreenRect(int index)
     {
@@ -65,7 +67,7 @@ public class KarmaBeadHud : MonoBehaviour
     }
     private static bool IsHudPoint(Vector2 point)
     {
-        return point.y < 105f * Scale && Mathf.Abs(point.x - Screen.width * 0.5f) < 315f * Scale;
+        return point.y < 105f * Scale && Mathf.Abs(point.x - Screen.width * 0.5f) < PanelWidth * 0.5f * Scale;
     }
     public static bool IsPointerOverHud()
     {
@@ -135,7 +137,7 @@ public class KarmaBeadHud : MonoBehaviour
                 GUI.color = Color.white;
                 GUI.Label(new Rect(statusRect.center.x - 80f, statusRect.y - 25f, 160f, 25f), enemy.StatusText, label);
             }
-        GUI.Box(new Rect(width / 2f - 315f, height - 105f, 630f, 100f), GUIContent.none);
+        GUI.Box(new Rect(width / 2f - PanelWidth * 0.5f, height - 105f, PanelWidth, 100f), GUIContent.none);
         for (int i = 0; i < storage.Beads.Count; i++)
         {
             KarmaBead bead = storage.Beads[i];
@@ -144,7 +146,7 @@ public class KarmaBeadHud : MonoBehaviour
             if (!bead.IsEmpty)
             {
                 float border = 1f + Mathf.Sqrt(bead.power) * 0.7f;
-                bool warning = storage.OutbreakWarningActive && bead.IsRotten;
+                bool warning = storage.OutbreakWarningActive;
                 bool nearRot = !bead.IsRotten && bead.Freshness <= 0.2f;
                 GUI.color = warning || nearRot ? Color.Lerp(BeadColor(bead), Color.red,
                     0.5f + Mathf.Sin(Time.unscaledTime * (warning ? 16f : 8f)) * 0.4f) : BeadColor(bead);

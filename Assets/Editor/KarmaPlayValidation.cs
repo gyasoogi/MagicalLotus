@@ -301,8 +301,31 @@ public static class KarmaPlayValidation
         Near(Time.timeScale, 5, "Multi-bullet right-drag release restores prior world speed");
         Check(UnityEngine.Object.FindObjectsByType<DefensiveStringShield>(FindObjectsSortMode.None).Length == 0,
             "Multi-bullet closed shape does not leave an open-stroke shield");
+        double capturedAt = Time.realtimeSinceStartupAsDouble;
+        while (Time.realtimeSinceStartupAsDouble - capturedAt < 2.85) yield return null;
+        bool freshBeforeDeadline = true;
+        foreach (var bead in storage.Beads) freshBeforeDeadline &= !bead.IsRotten;
+        Check(freshBeforeDeadline, "Actual right-drag capture remains usable before three real seconds");
+        while (Time.realtimeSinceStartupAsDouble - capturedAt < 3.05) yield return null;
+        bool rottenAtDeadline = true;
+        foreach (var bead in storage.Beads)
+            rottenAtDeadline &= bead.IsRotten && KarmaBeadHud.BeadColor(bead) == Color.black;
+        Check(rottenAtDeadline, $"Actual right-drag capture is fully black and rotten after {Time.realtimeSinceStartupAsDouble - capturedAt:0.000} real seconds");
         InputSystem.RemoveDevice(virtualMouse); virtualMouse = null;
         ClearCaptureFixture(); yield return null;
+
+        // A stalled/disabled storage Update and timeScale=0 cannot extend the deadline.
+        storage.enabled = false;
+        Time.timeScale = 0f;
+        Load(KarmaKeyword.Poison);
+        capturedAt = Time.realtimeSinceStartupAsDouble;
+        while (Time.realtimeSinceStartupAsDouble - capturedAt < 3.05) yield return null;
+        Check(storage.Beads[0].IsRotten && KarmaBeadHud.BeadColor(storage.Beads[0]) == Color.black,
+            $"Bead expires with storage Update disabled and time scale zero after {Time.realtimeSinceStartupAsDouble - capturedAt:0.000} real seconds");
+        ClearCaptureFixture();
+        storage.enabled = true;
+        Time.timeScale = 5f;
+        yield return null;
     }
 
     private static IEnumerator CombatInputChecks()
@@ -717,7 +740,7 @@ public static class KarmaPlayValidation
             && player.GetComponent<StringDrawer>().enabled, "Restart restores movement and drawing");
         Check(!player.GetComponent<PlayerMovement>().IsDashing && player.GetComponent<PlayerMovement>().DashCooldownRemaining == 0,
             "Restart clears dash and cooldown state");
-        Check(storage.StoredProjectileCount == 0 && storage.Energy == 0 && !storage.HasArmedKeyword && !storage.IsExtractionActive,
+        Check(storage.Beads.Count == 4 && storage.StoredProjectileCount == 0 && storage.Energy == 0 && !storage.HasArmedKeyword && !storage.IsExtractionActive,
             "Restart clears beads energy and pending karma");
         Check(spawner.AliveCount == 1 && UnityEngine.Object.FindObjectsByType<GameRestartController>(FindObjectsSortMode.None).Length == 1,
             "Restart recreates exactly one enemy and one restart controller");
@@ -874,7 +897,18 @@ public static class KarmaPlayValidation
         projectilePrefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Prefabs/CapturableProjectile.prefab").GetComponent<CapturableProjectile>();
         Near((float)Get(projectilePrefab, "contactDamage"), 34f, "Actual projectile prefab explicitly stores 34 damage");
         Check(player != null && storage != null && capture != null && spawner != null, "Main scene runtime initialization");
-        Check(player.GetComponent<KarmaBeadHud>() != null && storage.Beads.Count == 8, "HUD and eight bead slots");
+        Check(player.GetComponent<KarmaBeadHud>() != null && storage.Beads.Count == 4, "HUD and four bead slots");
+        KarmaBeadHud initialHud = player.GetComponent<KarmaBeadHud>();
+        Near((initialHud.GetSlotScreenRect(0).center.x + initialHud.GetSlotScreenRect(3).center.x) * 0.5f,
+            Screen.width * 0.5f, "Four bead slots are centered on the screen");
+        for (int i = 0; i < storage.Beads.Count; i++)
+        {
+            Rect slot = initialHud.GetSlotScreenRect(i);
+            Check(slot.xMin >= 0 && slot.xMax <= Screen.width && slot.yMin >= 0 && slot.yMax <= Screen.height,
+                "Bead slot stays inside the screen: " + i);
+            if (i > 0) Check(initialHud.GetSlotScreenRect(i - 1).xMax < slot.xMin,
+                "Four bead slots do not overlap: " + i);
+        }
         Check(player.GetComponent<GameRestartController>() != null, "Death restart is connected automatically");
         Near(player.Health, 100, "Player starts at one hundred health");
         Near(player.MaxHealth, 100, "Player health ceiling stays at one hundred for three-hit combat");
@@ -926,8 +960,9 @@ public static class KarmaPlayValidation
         Color oldColor = KarmaBeadHud.BeadColor(storage.Beads[0]);
         Load(KarmaKeyword.Poison, 3);
         Check(storage.Beads[0].power == 5 && storage.Beads[1].IsEmpty, "Same keyword merges across separate captures and increases strength");
-        Near(storage.Beads[0].Freshness, 1, "Merging refreshes bead lifetime");
-        Check(KarmaBeadHud.BeadColor(storage.Beads[0]).grayscale > oldColor.grayscale, "Refreshed bead regains its color");
+        Near(storage.Beads[0].Freshness, 0.5f, "Merging preserves decay progress from first acquisition");
+        Check(Vector4.Distance(KarmaBeadHud.BeadColor(storage.Beads[0]), oldColor) < 0.02f,
+            "Merging preserves the bead decay color");
         storage.Beads[0].remaining = storage.Beads[0].lifetime * 0.5f;
         Near(KarmaBeadHud.BeadColor(storage.Beads[0]).g, KarmaBeadHud.KeywordColor(KarmaKeyword.Poison).g * 0.5f, "Half lifetime renders half brightness");
         storage.Beads[0].remaining = 0;
@@ -953,32 +988,57 @@ public static class KarmaPlayValidation
         InputSystem.QueueStateEvent(virtualKeyboard, new KeyboardState());
         InputSystem.Update();
         InputSystem.RemoveDevice(virtualKeyboard); virtualKeyboard = null;
-        ClearBeads(); Load(KarmaKeyword.Light);
+        ClearBeads(); yield return null;
+        // Reproduce an old Inspector/serialized override without relying on a clean project default.
+        JsonUtility.FromJsonOverwrite("{\"decaySeconds\":20}", storage);
+        Load(KarmaKeyword.Light);
         float beforePause = storage.Beads[0].remaining;
-        Near(beforePause, 5f, "Fresh karma now decays in five seconds instead of twenty");
+        Near(beforePause, 3f, "Old serialized twenty-second setting cannot override three-second decay", 0.05f);
         Time.timeScale = 0;
         double resume = EditorApplication.timeSinceStartup + 0.2;
         while (EditorApplication.timeSinceStartup < resume) yield return null;
-        Near(storage.Beads[0].remaining, beforePause, "Paused game does not decay beads");
+        Check(storage.Beads[0].remaining < beforePause - 0.15f,
+            "Zero time scale cannot delay real-time bead decay");
         Time.timeScale = 0.03f;
         yield return WaitReal(0.35f);
         Check(storage.Beads[0].remaining < beforePause - 0.25f,
             "Strong drawing slow motion does not stretch karma decay time");
         Time.timeScale = 5;
-        yield return WaitReal(4.85f);
-        Check(storage.Beads[0].IsRotten && !storage.Beads[0].IsEmpty, "Five real seconds makes bead rotten without freeing slot");
+        yield return WaitReal(2.85f);
+        Check(storage.Beads[0].IsRotten && !storage.Beads[0].IsEmpty, "Three real seconds makes bead rotten without freeing slot");
         Check(!storage.TryConsume(out _, out _), "Rotten bead cannot activate");
         Check(!storage.TryArmFromSlot(0, Vector3.zero), "Rotten bead cannot be dropped to arm");
         Load(KarmaKeyword.Curse);
         Check(storage.Beads[1].keyword == KarmaKeyword.Curse && !storage.Beads[1].IsEmpty, "Rotten slot is not overwritten");
 
+        // Staggered captures have independent deadlines, including merges and the fourth slot.
+        ClearBeads(); Load(KarmaKeyword.Poison);
+        yield return WaitReal(1.1f);
+        float firstRemaining = storage.Beads[0].remaining;
+        Load(KarmaKeyword.Curse);
+        Load(KarmaKeyword.Poison);
+        Check(storage.Beads[0].remaining <= firstRemaining && storage.Beads[0].remaining > firstRemaining - 0.1f,
+            "Later captures and merging do not reset the first slot timer");
+        Near(storage.Beads[1].remaining, 3f, "New slot starts its own three-second decay immediately", 0.05f);
+        yield return WaitReal(2.05f);
+        Check(storage.Beads[0].IsRotten && !storage.Beads[1].IsRotten && storage.Beads[2].IsEmpty
+            && storage.Beads[3].IsEmpty && !storage.OutbreakWarningActive,
+            "First bead rots three seconds after acquisition while later bead stays healthy and inventory is not full");
+        float secondRemaining = storage.Beads[1].remaining;
+        Load(KarmaKeyword.Light); Load(KarmaKeyword.Dark);
+        Check(storage.Beads[1].remaining <= secondRemaining && storage.Beads[1].remaining > secondRemaining - 0.1f,
+            "Filling the fourth slot does not reset earlier decay");
+        yield return null; yield return null;
+        Check(!storage.OutbreakWarningActive && storage.Beads[0].IsRotten && !storage.Beads[3].IsRotten,
+            "Filling inventory keeps individual decay stages and waits for all four rotten beads");
+
         ClearBeads();
-        for (int i = 0; i < 8; i++) { Load(KarmaKeyword.Curse); storage.Beads[i].remaining = 0; }
+        for (int i = 0; i < storage.Beads.Count; i++) { Load(KarmaKeyword.Curse); storage.Beads[i].remaining = 0; }
         var overflow = Bullet(KarmaKeyword.Poison, center);
         Check(storage.StoreBatch(new List<CapturableProjectile> { overflow }) == 0 && overflow.CanCapture, "Full inventory preserves uncaptured overflow bullets");
-        storage.Beads[7].remaining = 10;
+        storage.Beads[3].remaining = 10;
         Load(KarmaKeyword.Curse);
-        Check(storage.Beads[7].power == 2, "Matching ability merges even when every bead slot is occupied");
+        Check(storage.Beads[3].power == 2, "Matching ability merges even when every bead slot is occupied");
         UnityEngine.Object.Destroy(overflow.gameObject);
         ClearBeads();
 
@@ -1007,6 +1067,8 @@ public static class KarmaPlayValidation
         yield return WaitReal(3.15f);
         Check(!storage.HasArmedKeyword && !storage.IsExtractionActive && !storage.TryConsume(out _, out _), "Unused extracted ability disappears after three real seconds");
         Near(Time.timeScale, 5, "Timed-out extraction restores normal test speed");
+        Check(storage.Beads[0].IsRotten, "Stored ability also decays during the three-second extraction window");
+        ClearBeads(); Load(KarmaKeyword.Curse);
         Check(storage.TryArmFromSlot(0, Vector3.zero), "Another ability can be extracted after timeout");
         Check(storage.TryConsume(out key, out power) && key == KarmaKeyword.Curse && power == 1, "Next attack consumes extracted ability once");
         yield return WaitReal(3.15f);
@@ -1177,32 +1239,53 @@ public static class KarmaPlayValidation
         yield return Wait(0.5f);
         Near(player.Health, hp - 34, "Projectile contact deals 34 damage once");
 
-        // Outbreak retains normal beads, empties only rotten beads, cannot be captured, tracks and hits once.
-        ClearBeads(); Load(KarmaKeyword.Poison); Load(KarmaKeyword.Curse); Load(KarmaKeyword.Light); Load(KarmaKeyword.Dark);
+        // Filling slots alone never triggers outbreak before decay.
+        ClearBeads(); yield return null;
+        foreach (KarmaKeyword kind in Enum.GetValues(typeof(KarmaKeyword))) Load(kind);
+        yield return null; yield return null;
+        bool allFresh = true;
+        foreach (var bead in storage.Beads) allFresh &= !bead.IsEmpty && !bead.IsRotten;
+        Check(!storage.OutbreakWarningActive && allFresh, "Four fresh occupied slots do not start outbreak warning");
+        yield return WaitReal(2.15f);
+        Check(!storage.OutbreakWarningActive && storage.StoredProjectileCount == 4
+            && UnityEngine.Object.FindFirstObjectByType<KarmaOutbreak>() == null,
+            "Four fresh beads stay stored without an orb after the warning-length interval");
+
+        // Every one of the four slots must be rotten to warn and launch an outbreak.
+        ClearBeads(); Load(KarmaKeyword.Poison); Load(KarmaKeyword.Curse); Load(KarmaKeyword.Light);
         storage.Beads[0].remaining = storage.Beads[1].remaining = 0;
         yield return null; yield return null;
         Check(UnityEngine.Object.FindObjectsByType<KarmaOutbreak>(FindObjectsSortMode.None).Length == 0 && !storage.OutbreakWarningActive, "Two rotten beads do not trigger outbreak");
         storage.Beads[2].remaining = 0;
         yield return null; yield return null;
+        Check(!storage.OutbreakWarningActive, "Three rotten occupied slots leave the fourth empty and do not trigger outbreak");
+        Load(KarmaKeyword.Dark);
+        yield return null; yield return null;
+        Check(!storage.OutbreakWarningActive && UnityEngine.Object.FindFirstObjectByType<KarmaOutbreak>() == null,
+            "Three rotten beads and one fresh bead do not trigger outbreak");
+        Check(!storage.TryArmFromSlot(0, player.transform.position), "Rotten bead stays unusable while a healthy slot prevents outbreak");
+        storage.Beads[3].remaining = 0;
+        yield return null; yield return null;
         Check(storage.OutbreakWarningActive && UnityEngine.Object.FindFirstObjectByType<KarmaOutbreak>() == null,
-            "Three rotten beads warn before creating an outbreak");
+            "Fourth bead decaying starts outbreak warning");
         Near(Time.timeScale, 0.35f, "Outbreak warning grants slow-motion reaction window");
         Check(storage.TryArmFromSlot(0, player.transform.position), "Warning temporarily allows using a rotten ability");
         storage.TryConsume(out _, out _);
         yield return null; yield return null;
         Check(!storage.OutbreakWarningActive, "Using a warned bead cancels outbreak below threshold");
-        yield return WaitReal(3.15f);
-        Load(KarmaKeyword.Poison); storage.Beads[0].remaining = 0;
-        Load(KarmaKeyword.Dark); // Refresh the healthy control bead for the five-second decay rule.
+        Load(KarmaKeyword.Poison);
+        yield return null; yield return null;
+        Check(!storage.OutbreakWarningActive, "Refilling with a fresh bead does not restart outbreak warning");
+        storage.Beads[0].remaining = 0;
         Time.timeScale = 1f;
         yield return null; yield return null;
-        Check(storage.OutbreakWarningActive, "Ignoring new rotten accumulation warns again");
+        Check(storage.OutbreakWarningActive, "All four slots becoming rotten again restarts warning");
         Check(storage.TryArmFromSlot(0, player.transform.position) && !storage.Beads[0].IsEmpty,
             "Last-chance rotten extraction keeps its slot until an attack actually consumes it");
         yield return WaitReal(2.15f);
         var orb = UnityEngine.Object.FindFirstObjectByType<KarmaOutbreak>();
-        Check(orb != null && storage.Beads[0].IsEmpty && storage.Beads[1].IsEmpty && storage.Beads[2].IsEmpty
-            && !storage.Beads[3].IsEmpty, "Three rotten beads produce one orb and preserve healthy bead");
+        Check(orb != null && storage.StoredProjectileCount == 0,
+            "Four rotten beads produce one orb and clear all four slots");
         Check(!storage.HasArmedKeyword, "Discarding a warned ability without attacking does not prevent outbreak");
         Check(orb.GetComponent<CapturableProjectile>() == null, "Outbreak cannot be captured as a projectile");
         var orbLoop = Loop(orb.transform.position);

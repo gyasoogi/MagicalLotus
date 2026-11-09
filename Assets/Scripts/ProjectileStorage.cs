@@ -4,8 +4,7 @@ using UnityEngine;
 [RequireComponent(typeof(PlayerHealth))]
 public class ProjectileStorage : MonoBehaviour
 {
-    [SerializeField, Min(1f)] private float decaySeconds = 5f;
-    [SerializeField, Range(1, 8)] private int outbreakThreshold = 3;
+    public const int SlotCount = 4;
     [SerializeField, Min(0.1f)] private float outbreakSpeed = 2f;
     [SerializeField, Min(0f)] private float outbreakDamage = 34f;
     [SerializeField, Min(1f)] private float outbreakLifetime = 20f;
@@ -22,7 +21,7 @@ public class ProjectileStorage : MonoBehaviour
     public float OutbreakWarningRemaining => Mathf.Max(0f, warningEnds - Time.unscaledTime);
     public bool CanExtract(KarmaBead bead) => !bead.IsEmpty && (!bead.IsRotten || OutbreakWarningActive);
     public void AddEnergy(float amount) { energy = Mathf.Clamp(energy + Mathf.Max(0f, amount), 0f, maxEnergy); }
-    [SerializeField] private KarmaBead[] beads = new KarmaBead[8];
+    [SerializeField] private KarmaBead[] beads = new KarmaBead[SlotCount];
     [SerializeField, Min(0.1f)] private float extractionDuration = 3f;
     [SerializeField, Range(0.01f, 1f)] private float extractionTimeScale = 0.2f;
     private KarmaKeyword armedKeyword;
@@ -45,7 +44,7 @@ public class ProjectileStorage : MonoBehaviour
     private void Awake()
     {
         if (GetComponent<PlayerHealth>() == null) gameObject.AddComponent<PlayerHealth>();
-        if (beads == null || beads.Length != 8) beads = new KarmaBead[8];
+        if (beads == null || beads.Length != SlotCount) beads = new KarmaBead[SlotCount];
         for (int i = 0; i < beads.Length; i++)
             if (beads[i] == null) beads[i] = new KarmaBead();
         if (GetComponent<KarmaBeadHud>() == null) gameObject.AddComponent<KarmaBeadHud>();
@@ -60,11 +59,9 @@ public class ProjectileStorage : MonoBehaviour
         foreach (KarmaBead bead in beads)
         {
             if (bead.IsEmpty) continue;
-            if (Time.timeScale > 0f)
-                bead.remaining = Mathf.Max(0f, bead.remaining - Time.unscaledDeltaTime);
             if (bead.IsRotten) rotten++;
         }
-        if (rotten < Mathf.Clamp(outbreakThreshold, 1, beads.Length)) { CancelWarning(); return; }
+        if (rotten < beads.Length) { CancelWarning(); return; }
         if (!OutbreakWarningActive)
         {
             warningEnds = Time.unscaledTime + Mathf.Max(0f, outbreakWarningSeconds);
@@ -74,8 +71,7 @@ public class ProjectileStorage : MonoBehaviour
         if (Time.unscaledTime < warningEnds) return;
         if (warningRescueSlot >= 0) EndExtraction();
         CancelWarning();
-        foreach (KarmaBead bead in beads)
-            if (bead.IsRotten) bead.Clear();
+        foreach (KarmaBead bead in beads) bead.Clear();
         KarmaOutbreak.Spawn(GetComponent<PlayerHealth>(), outbreakSpeed,
             outbreakDamage, outbreakLifetime);
     }
@@ -92,7 +88,8 @@ public class ProjectileStorage : MonoBehaviour
 
     private void OnDisable() { EndExtraction(); CancelWarning(); }
 
-    // Fresh matching beads merge across captures; rotten beads keep occupying their slots.
+    // Each slot decays from its first capture; merging only increases power.
+    // Rotten beads keep occupying their slots.
     public int StoreBatch(List<CapturableProjectile> projectiles)
     {
         int captured = 0;
@@ -110,9 +107,10 @@ public class ProjectileStorage : MonoBehaviour
                 if (energy < energyPerKarma) return captured;
                 if (!projectile.TryClaimKarma()) continue;
                 energy -= energyPerKarma;
+                if (destination.IsEmpty)
+                    destination.BeginDecay();
                 destination.keyword = (KarmaKeyword)kind;
                 destination.power++;
-                destination.lifetime = destination.remaining = Mathf.Max(1f, decaySeconds);
                 captured++;
             }
         }
